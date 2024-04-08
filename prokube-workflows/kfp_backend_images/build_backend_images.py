@@ -3,7 +3,8 @@ import subprocess
 
 
 def main(commit_message: str, images: str) -> None:
-    commit_command = ['git', 'commit', '-m', f"{commit_message} {images}"]
+    # images should be in square brackets in accordance with workflow condition
+    commit_command = ['git', 'commit', '-m', f"{commit_message} [{images}]"]
     subprocess.run(commit_command, check=True)
 
     push_command = ['git', 'push', 'origin', 'GCP-artifact-registry']
