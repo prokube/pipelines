@@ -2,7 +2,7 @@
 This directory contains a script to trigger workflow for building KFP backend images and pushing them to Google Artifact Registry (see .github/workflows/build-backend-images.yaml for detailed info).
 
 ## Usage
-Stage the desired changes using git, then run `make build-apiserver` to build and push apiserver image. Run `make build-all` to build and push all KFP backend images. Both commands commit to **GCP-artifact-registry** branch of the repository. If you want to add custom commit message, see Python script details below.
+Stage the desired changes using git, then run `make build_apiserver` to build and push apiserver image. Run `make build_all` to build and push all KFP backend images. Both commands commit to **GCP-artifact-registry** branch of the repository. If you want to add custom commit message, see Python script details below.
   
 There are 2 ways to deploy the obtained backend images in cluster:
 
