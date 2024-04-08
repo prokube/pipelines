@@ -24,8 +24,8 @@ jobs:
   supporting-images:
     runs-on: ubuntu-latest
     if: |
-      contains(github.event.head_commit.message, '[apiserver-image]') ||
-      contains(github.event.head_commit.message, '[all-images]')
+      contains(github.event.head_commit.message, '[apiserver]') ||
+      contains(github.event.head_commit.message, '[all]')
     container:
       image: golang:alpine3.19
 
@@ -63,8 +63,8 @@ jobs:
   apiserver-image:
     needs: supporting-images
     if: |
-      contains(github.event.head_commit.message, '[apiserver-image]') ||
-      contains(github.event.head_commit.message, '[all-images]')
+      contains(github.event.head_commit.message, '[apiserver]') ||
+      contains(github.event.head_commit.message, '[all]')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -98,7 +98,7 @@ jobs:
   backend-images:
     needs: supporting-images
     if: |
-      contains(github.event.head_commit.message, '[all-images]')
+      contains(github.event.head_commit.message, '[all]')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
