@@ -3,7 +3,7 @@ name: KFP Backend Image Build
 on:
   push:
     branches:
-      - GCP-artifact-registry
+      - '*'
   pull_request:
 
 env:
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       contains(github.event.head_commit.message, '[apiserver]') ||
-      contains(github.event.head_commit.message, '[all]')
+      contains(github.event.head_commit.message, '[backend-all]')
     container:
       image: golang:alpine3.19
 
@@ -64,7 +64,7 @@ jobs:
     needs: supporting-images
     if: |
       contains(github.event.head_commit.message, '[apiserver]') ||
-      contains(github.event.head_commit.message, '[all]')
+      contains(github.event.head_commit.message, '[backend-all]')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -98,7 +98,7 @@ jobs:
   backend-images:
     needs: supporting-images
     if: |
-      contains(github.event.head_commit.message, '[all]')
+      contains(github.event.head_commit.message, '[backend-all]')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
