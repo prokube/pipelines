@@ -13,7 +13,7 @@ def main(commit_message: str, images: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--images", choices=["all", "apiserver"], required=True)
+    parser.add_argument("--images", choices=["backend-all", "apiserver"], required=True)
     parser.add_argument("--commit-message", default="Trigger image build:")
     args = parser.parse_args()
     main(commit_message=args.commit_message, images=args.images)
