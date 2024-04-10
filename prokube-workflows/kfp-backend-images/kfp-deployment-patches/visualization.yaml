@@ -7,7 +7,7 @@ metadata:
     spec:
       containers:
       - name: ml-pipeline-visualization-server
-        image: ${CI_IP_ADDRESS_AND_PORT}/kiss/prokube-images/visualization:latest
+        image: ${REGISTRY_PATH}/kiss/prokube-images/visualization:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred

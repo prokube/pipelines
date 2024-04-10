@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: ml-pipeline-persistenceagent
-        image: ${CI_IP_ADDRESS_AND_PORT}/kiss/prokube-images/persistenceagent:latest
+        image: ${REGISTRY_PATH}/kiss/prokube-images/persistenceagent:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred

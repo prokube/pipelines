@@ -12,8 +12,8 @@ build_all:
 .PHONY: check-env patch_apiserver patch_cacheserver patch_persistenceagent patch_scheduledworkflow patch_viewercontroller patch_visualization patch_all
 
 check-env:
-ifndef CI_IP_ADDRESS_AND_PORT
-	$(error CI_IP_ADDRESS_AND_PORT is not set)
+ifndef REGISTRY_PATH
+	$(error REGISTRY_PATH is not set)
 endif
 
 patch_apiserver: check-env

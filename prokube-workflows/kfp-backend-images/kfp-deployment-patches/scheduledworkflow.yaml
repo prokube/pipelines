@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: ml-pipeline-scheduledworkflow
-        image: ${CI_IP_ADDRESS_AND_PORT}/kiss/prokube-images/scheduledworkflow:latest
+        image: ${REGISTRY_PATH}/kiss/prokube-images/scheduledworkflow:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred
