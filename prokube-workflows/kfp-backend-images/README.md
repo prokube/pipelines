@@ -6,7 +6,7 @@ This directory contains a script to trigger GitHub CI workflow for building KFP 
 Stage the desired changes using git, then run one of the following:
 ```make
 make build_driver_launcher  # build and push driver and launcher images
-make build_apiserver  # build and push apiserver image
+make build_apiserver  # build and push apiserver image (launcher and driver get updated automatically)
 make build_all  # build and push all KFP backend images
 ```
 These commands push the code to GitHub and trigger image build using GitHub workflows. The images are then pushed to GAR. GAR path is specified in **GCP_ARTIFACT_REGISTRY_PATH** secret, gcloud auth credentials are in **GCP_SA_KEY** secret.
@@ -26,10 +26,11 @@ kubectl -n=kubeflow create secret docker-registry regcred-gar \
 There are 2 ways to deploy the obtained backend images in a cluster:
 
 1. Local deployment patch using Makefile. Specify `REGISTRY_PATH`(e.g. europe-west1-docker.pkg.dev/{GCP_PROJECT_NAME}/prokube/) environment variable and then run `make apiserver` to patch apiserver image. Run `make all` to patch all backend images (this is a dev way: images will be reset to default on cluster restart).
-2. (Semi-)automated GitLab CI deployment. Implemented only for apiserver image in **prokube-ai/paas** repository in branch **feature/custom_pipelines_apiserver_image** [here](https://github.com/prokube-ai/paas/blob/feature/custom_pipelines_api_server_image/kubeflow/project-overlays/pipeline/pipeline/pipeline-api-server.yaml). Replace `GITLAB_REGISTRY:MLPIPELINESERVER_IMAGE_TAG` in **paas/kubeflow/project-overlays/pipeline/pipeline-api-server.yaml** with the actual path to the image in registry.
+2. (Semi-)automated GitLab CI deployment. Implemented only for apiserver image in **prokube-ai/paas** repository in branch **feature/custom_pipelines_apiserver_image** [here](https://github.com/prokube-ai/paas/blob/feature/custom_pipelines_api_server_image/kubeflow/project-overlays/pipeline/pipeline/pipeline-api-server.yaml). Replace `GITLAB_REGISTRY:MLPIPELINESERVER_IMAGE_TAG` with the actual path to the image in the registry, push these changes to GitLab CI and sync kubeflow using ArgoCD.
 
 ## Dev Info
-To create KFP backend images (apiserver, controller, cacheserver, persistenceagent, scheduledworkflow, visualization), we first need to build driver and launcher images (set `V2_DRIVER_IMAGE` and `V2_LAUNCHER_IMAGE` environment variables to point to corresponding image). Those are used at least to build the newest possible version of apiserver image, possibly for other images too.
+![Untitled-2024-04-05-0940-4](https://github.com/prokube-ai/pipelines/assets/116455436/2c36c3f8-d9f8-4bb0-870c-9e46c5e9159a)  
+To create KFP backend images (apiserver, controller, cacheserver, persistenceagent, scheduledworkflow, visualization), we first need to build driver and launcher images (set `V2_DRIVER_IMAGE` and `V2_LAUNCHER_IMAGE` environment variables to point to corresponding images). Those are used at least to build the newest version of apiserver image, possibly for other images too.
 
 The GitHub actions workflow builds these images automatically and pushes them to GAR. This uses a preconfigured service account for Google Cloud with a role **roles/artifactregistry.writer**. Authentication details (described by GCP_SA_KEY secret on GitHub) can be obtained by running `gcloud iam service-accounts keys create key.json --iam-account=github@{GCP_PROJECT_NAME}.iam.gserviceaccount.com` (replace {GCP_PROJECT_NAME} with our project name).
 
@@ -37,14 +38,10 @@ GitHub workflows uses keyword "[apiserver]" anywhere in commit message to trigge
 
 ### Script Details
 Python script does the following:
-1. Creates a commit for GitHub. Depending on the command line arguments, either apiserver image, or all backend images are getting built.
+1. Creates a commit for GitHub. Depending on the command line arguments, either launcher&driver, apiserver, or all backend images are getting built.
 2. Pushes the commit to GitHub, triggering images build.
 
-*Optionally*: before using the script:
-* Check out to master branch
-* Fetch the newest (or specified) available master from pipelines repo
-* Check out back to GCP backend images branch, rebase it to new main
-* Stage all the necessary files
+*Optionally*: sync the fork before using the script.
 
 Example usage:
 ```py
