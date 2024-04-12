@@ -11,7 +11,7 @@ make build_all  # build and push all KFP backend images
 ```
 These commands push the code to GitHub and trigger image build using GitHub workflows. The images are then pushed to GAR. GAR path is specified in **GCP_ARTIFACT_REGISTRY_PATH** secret, gcloud auth credentials are in **GCP_SA_KEY** secret.
   
-The code gets pushed to the current upstream branch. If you want to add custom commit message or rebase current branch to the latest version of main first, see Python script details below. 
+The code gets pushed to the current upstream branch. If you want to add custom commit message, see Python script details below. 
   
 ### Deploy to Cluster
 First, you need to add a secret to kubeflow namespace, containing GAR credentials (use service account that is authenticated to pull images from GAR).
