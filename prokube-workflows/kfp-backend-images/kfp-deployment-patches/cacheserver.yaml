@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: ${REGISTRY_PATH}/kiss/prokube-images/cacheserver:latest
+        image: ${REGISTRY_PATH}/cacheserver:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred
