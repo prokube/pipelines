@@ -216,6 +216,7 @@ func modifyPodSpecPatch(patch string) string {
             }`
 
     // Insert the volume mount part right before the closing bracket of the first container's array
+    // Another line of random comand
     index := strings.LastIndex(patch, "}]")
     if index != -1 {
         patch = patch[:index] + volumeMountPart + patch[index:]
