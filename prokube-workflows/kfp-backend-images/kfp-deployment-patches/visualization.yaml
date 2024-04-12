@@ -10,4 +10,4 @@ metadata:
         image: ${REGISTRY_PATH}/visualization:latest
         imagePullPolicy: Always
       imagePullSecrets:
-      - name: regcred
+      - name: regcred-gar
