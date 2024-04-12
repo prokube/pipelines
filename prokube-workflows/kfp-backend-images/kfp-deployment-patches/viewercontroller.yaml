@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: ml-pipeline-viewer-crd
-        image: ${REGISTRY_PATH}/kiss/prokube-images/viewercontroller:latest
+        image: ${REGISTRY_PATH}/viewercontroller:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred

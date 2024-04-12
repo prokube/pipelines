@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: ml-pipeline-api-server
-        image: ${REGISTRY_PATH}/kiss/prokube-images/apiserver:latest
+        image: ${REGISTRY_PATH}/apiserver:latest
         imagePullPolicy: Always
       imagePullSecrets:
       - name: regcred
