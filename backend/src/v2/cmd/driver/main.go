@@ -227,6 +227,7 @@ func modifyPodSpecPatch(patch string) string {
         patch = patch[:index] + volumePart + patch[index:]
     }
 
+
     return patch
 }
 
