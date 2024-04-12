@@ -1,5 +1,8 @@
 # Trigger image build --------------
-.PHONY: build_apiserver build_all
+.PHONY: build_apiserver build_all build_driver_launcher
+
+build_driver_launcher:
+	python3 build_backend_images.py --images=driver-launcher
 
 build_apiserver:
 	python3 build_backend_images.py --images=apiserver
