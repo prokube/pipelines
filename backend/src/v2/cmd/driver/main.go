@@ -286,3 +286,4 @@ func newMlmdClient() (*metadata.Client, error) {
 	}
 	return metadata.NewClient(mlmdConfig.Address, mlmdConfig.Port)
 }
+
