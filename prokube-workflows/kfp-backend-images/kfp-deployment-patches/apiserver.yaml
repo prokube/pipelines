@@ -10,4 +10,4 @@ spec:
         image: ${REGISTRY_PATH}/apiserver:latest
         imagePullPolicy: Always
       imagePullSecrets:
-      - name: regcred
+      - name: regcred-gar
