@@ -57,9 +57,9 @@ jobs:
       run: |
         cd ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/
         export KO_DOCKER_REPO=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}
-        ko publish ./cmd/launcher-v2 --bare --tags=commit-${{ github.sha }}
+        ko publish ./cmd/launcher-v2 --bare
         export KO_DOCKER_REPO=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}
-        ko publish ./cmd/driver --bare --tags=commit-${{ github.sha }}
+        ko publish ./cmd/driver --bare
 
   apiserver-image:
     needs: supporting-images
