@@ -10,7 +10,6 @@ env:
   KFP_PATH: "."
   # Example: IMAGE_PATH: "us-central1-docker.pkg.dev/my-project/my-repo"
   IMAGE_PATH: "${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}"
-  KO_DOCKER_REPO: "${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}"
   DRIVER_IMAGE_NAME: "driver"
   LAUNCHER_IMAGE_NAME: "launcher"
   APISERVER_IMAGE_NAME: "apiserver"
@@ -36,7 +35,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        apk update && apk add --no-cache bash openssl docker python3 curl jq sudo tar
+        apk update && apk add --no-cache bash openssl docker python3 curl jq sudo tar make
 
     - name: Auth GCloud CLI
       uses: google-github-actions/auth@v2
@@ -56,10 +55,9 @@ jobs:
     - name: Build and Push Images with ko
       run: |
         cd ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/
-        export KO_DOCKER_REPO=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}
-        ko publish ./cmd/launcher-v2 --bare
-        export KO_DOCKER_REPO=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}
-        ko publish ./cmd/driver --bare
+        export DEV_IMAGE_PREFIX=${{ env.IMAGE_PATH }}/
+        make build
+        make image-dev
 
   apiserver-image:
     needs: supporting-images
