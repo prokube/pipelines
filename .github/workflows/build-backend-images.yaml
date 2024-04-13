@@ -11,7 +11,7 @@ env:
   # Example: IMAGE_PATH: "us-central1-docker.pkg.dev/my-project/my-repo"
   IMAGE_PATH: "${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}"
   DRIVER_IMAGE_NAME: "driver"
-  LAUNCHER_IMAGE_NAME: "launcher"
+  LAUNCHER_IMAGE_NAME: "launcher-v2"
   APISERVER_IMAGE_NAME: "apiserver"
   PERSISTENCEAGENT_IMAGE_NAME: "persistence-agent"
   CACHESERVER_IMAGE_NAME: "cache-server"
@@ -83,16 +83,25 @@ jobs:
 
     - name: Build and Push API Server Image
       run: |
-        V2_DRIVER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}:latest
-        V2_LAUNCHER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}:latest
+        # Inject custom driver and launcher image link to apiserver code.
+        # Should theoretically be possible to do this using env vars,
+        # but didn't work for us.
+        variable_name="DefaultLauncherImage"
+        new_value=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}:latest
+        escaped_new_value=$(printf '%s\n' "${new_value}" | sed -e 's/[\/&]/\\&/g')
+        sed -i "s/\(${variable_name}\s*=\s*\"\)[^\"]*\"/\1${escaped_new_value}\"/g" \
+                ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/compiler/argocompiler/container.go
+
+        variable_name="DefaultDriverImage"
+        new_value=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}:latest
+        escaped_new_value=$(printf '%s\n' "${new_value}" | sed -e 's/[\/&]/\\&/g')
+        sed -i "s/\(${variable_name}\s*=\s*\"\)[^\"]*\"/\1${escaped_new_value}\"/g" \
+                ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/compiler/argocompiler/container.go
+
         LATEST_TAG=${{ env.IMAGE_PATH }}/${{ env.APISERVER_IMAGE_NAME }}:latest
         COMMIT_TAG=${{ env.IMAGE_PATH }}/${{ env.APISERVER_IMAGE_NAME }}:commit-${{ github.sha }}
 
-        docker build \
-          -t $LATEST_TAG \
-          -f backend/Dockerfile \
-          --build-arg V2_DRIVER_IMAGE=$V2_DRIVER_IMAGE \
-          --build-arg V2_LAUNCHER_IMAGE=$V2_LAUNCHER_IMAGE ${GITHUB_WORKSPACE}
+        docker build -t $LATEST_TAG -f backend/Dockerfile ${GITHUB_WORKSPACE}
         docker tag $LATEST_TAG $COMMIT_TAG
         docker push $LATEST_TAG
         docker push $COMMIT_TAG
@@ -120,8 +129,17 @@ jobs:
 
     - name: Build and Push KFP Backend Images
       run: |
-        export V2_DRIVER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}:latest
-        export V2_LAUNCHER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}:latest
+        variable_name="DefaultLauncherImage"
+        new_value=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}:latest
+        escaped_new_value=$(printf '%s\n' "${new_value}" | sed -e 's/[\/&]/\\&/g')
+        sed -i "s/\(${variable_name}\s*=\s*\"\)[^\"]*\"/\1${escaped_new_value}\"/g" \
+                ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/compiler/argocompiler/container.go
+
+        variable_name="DefaultDriverImage"
+        new_value=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}:latest
+        escaped_new_value=$(printf '%s\n' "${new_value}" | sed -e 's/[\/&]/\\&/g')
+        sed -i "s/\(${variable_name}\s*=\s*\"\)[^\"]*\"/\1${escaped_new_value}\"/g" \
+                ${GITHUB_WORKSPACE}/${KFP_PATH}/backend/src/v2/compiler/argocompiler/container.go
 
         LATEST_TAG=${{ env.IMAGE_PATH }}/${{ env.PERSISTENCEAGENT_IMAGE_NAME }}:latest
         COMMIT_TAG=${{ env.IMAGE_PATH }}/${{ env.PERSISTENCEAGENT_IMAGE_NAME }}:commit-${{ github.sha }}
