@@ -14,6 +14,11 @@
 
 # 1. Build api server application
 FROM golang:1.20.4-buster as builder
+ARG V2_DRIVER_IMAGE
+ARG V2_LAUNCHER_IMAGE
+ENV V2_DRIVER_IMAGE=${V2_DRIVER_IMAGE}
+ENV V2_LAUNCHER_IMAGE=${V2_LAUNCHER_IMAGE}
+
 RUN apt-get update && apt-get install -y cmake clang musl-dev openssl
 WORKDIR /go/src/github.com/kubeflow/pipelines
 COPY . .
