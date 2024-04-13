@@ -13,8 +13,6 @@ env:
   KO_DOCKER_REPO: "${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}"
   DRIVER_IMAGE_NAME: "driver"
   LAUNCHER_IMAGE_NAME: "launcher"
-  V2_DRIVER_IMAGE: ${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}/driver:latest
-  V2_LAUNCHER_IMAGE: ${{ secrets.GCP_ARTIFACT_REGISTRY_PATH }}/launcher:latest
   APISERVER_IMAGE_NAME: "apiserver"
   PERSISTENCEAGENT_IMAGE_NAME: "persistence-agent"
   CACHESERVER_IMAGE_NAME: "cache-server"
@@ -87,13 +85,16 @@ jobs:
 
     - name: Build and Push API Server Image
       run: |
+        V2_DRIVER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.DRIVER_IMAGE_NAME }}:latest
+        V2_LAUNCHER_IMAGE=${{ env.IMAGE_PATH }}/${{ env.LAUNCHER_IMAGE_NAME }}:latest
         LATEST_TAG=${{ env.IMAGE_PATH }}/${{ env.APISERVER_IMAGE_NAME }}:latest
         COMMIT_TAG=${{ env.IMAGE_PATH }}/${{ env.APISERVER_IMAGE_NAME }}:commit-${{ github.sha }}
 
-        echo "V2_DRIVER_IMAGE: $V2_DRIVER_IMAGE"
-        echo "V2_LAUNCHER_IMAGE: $V2_LAUNCHER_IMAGE"
-
-        docker build -t $LATEST_TAG -f backend/Dockerfile ${GITHUB_WORKSPACE}
+        docker build \
+          -t $LATEST_TAG \
+          -f backend/Dockerfile \
+          --build-arg V2_DRIVER_IMAGE=$V2_DRIVER_IMAGE \
+          --build-arg V2_LAUNCHER_IMAGE=$V2_LAUNCHER_IMAGE ${GITHUB_WORKSPACE}
         docker tag $LATEST_TAG $COMMIT_TAG
         docker push $LATEST_TAG
         docker push $COMMIT_TAG
