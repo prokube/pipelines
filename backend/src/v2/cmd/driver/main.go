@@ -199,9 +199,6 @@ func drive() (err error) {
 }
 
 func modifyPodSpecPatch(patch string) string {
-
-
-
     volumePart := `,
     "volumes": [
       {
