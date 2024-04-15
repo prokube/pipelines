@@ -210,10 +210,12 @@ func modifyPodSpecPatch(patch string) string {
     ]`
 
     volumeMountPart := `,
+          "volumeMounts": [
             {
               "name": "shm",
               "mountPath": "/dev/shm"
-            }`
+            }
+          ]`
 
     // Insert the volume mount part right before the closing bracket of the first container's array
     // Another line of random comand
