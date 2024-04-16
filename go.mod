@@ -29,7 +29,8 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kubeflow/pipelines/api v0.0.0-20240403202122-a78dc77a301c
-	github.com/kubeflow/pipelines/kubernetes_platform v0.0.0-20240403202122-a78dc77a301c
+	// github.com/kubeflow/pipelines/kubernetes_platform v0.0.0-20240403202122-a78dc77a301c
+    github.com/prokube-ai/pipelines/kubernetes_platform v0.0.0
 	github.com/kubeflow/pipelines/third_party/ml-metadata v0.0.0-20240403202122-a78dc77a301c
 	github.com/lestrrat-go/strftime v1.0.4
 	github.com/mattn/go-sqlite3 v1.14.19
@@ -192,7 +193,6 @@ replace (
 	k8s.io/code-generator => k8s.io/code-generator v0.25.9
 	k8s.io/kubernetes => k8s.io/kubernetes v1.11.1
 	sigs.k8s.io/controller-tools => sigs.k8s.io/controller-tools v0.2.9
-    github.com/kubeflow/pipelines/kubernetes_platform => ./kubernetes_platform/go
 )
 
 go 1.20
