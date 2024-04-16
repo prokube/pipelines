@@ -23,7 +23,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-    "strings"
 
 	"github.com/kubeflow/pipelines/backend/src/v2/cacheutils"
 	"github.com/kubeflow/pipelines/backend/src/v2/driver"
@@ -198,42 +197,6 @@ func drive() (err error) {
 	return handleExecution(execution, *driverType, executionPaths)
 }
 
-func modifyPodSpecPatch(patch string) string {
-    volumePart := `,
-    "volumes": [
-      {
-        "name": "shm",
-        "emptyDir": {
-          "medium": "Memory"
-        }
-      }
-    ]`
-
-    volumeMountPart := `,
-          "volumeMounts": [
-            {
-              "name": "shm",
-              "mountPath": "/dev/shm"
-            }
-          ]`
-
-    // Insert the volume mount part right before the closing bracket of the first container's array
-    // Another line of random comand
-    index := strings.LastIndex(patch, "}]")
-    if index != -1 {
-        patch = patch[:index] + volumeMountPart + patch[index:]
-    }
-
-    // Insert the volume part before the closing brace of the root object
-    index = strings.LastIndex(patch, "}")
-    if index != -1 {
-        patch = patch[:index] + volumePart + patch[index:]
-    }
-
-
-    return patch
-}
-
 func handleExecution(execution *driver.Execution, driverType string, executionPaths *ExecutionPaths) error {
 	if execution.ID != 0 {
 		glog.Infof("output execution.ID=%v", execution.ID)
@@ -272,7 +235,6 @@ func handleExecution(execution *driver.Execution, driverType string, executionPa
 		}
 	}
 	if execution.PodSpecPatch != "" {
-        execution.PodSpecPatch = modifyPodSpecPatch(execution.PodSpecPatch)
 		glog.Infof("output podSpecPatch=\n%s\n", execution.PodSpecPatch)
 		if executionPaths.PodSpecPatch == "" {
 			return fmt.Errorf("--pod_spec_patch_path is required for container executor drivers")
