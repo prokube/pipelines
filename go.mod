@@ -30,7 +30,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kubeflow/pipelines/api v0.0.0-20240403202122-a78dc77a301c
 	// github.com/kubeflow/pipelines/kubernetes_platform v0.0.0-20240403202122-a78dc77a301c
-    github.com/prokube-ai/pipelines/kubernetes_platform
+    github.com/prokube-ai/pipelines/kubernetes_platform v0.0.0-20240416-1756
 	github.com/kubeflow/pipelines/third_party/ml-metadata v0.0.0-20240403202122-a78dc77a301c
 	github.com/lestrrat-go/strftime v1.0.4
 	github.com/mattn/go-sqlite3 v1.14.19
