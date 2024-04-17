@@ -14,13 +14,15 @@ These commands push the code to GitHub and trigger image build using GitHub work
 The code gets pushed to the current upstream branch. If you want to add custom commit message, see Python script details below. 
   
 ### Deploy to Cluster
-First, you need to add a secret to kubeflow namespace, containing GAR credentials (use service account that is authenticated to pull images from GAR).
+First, you need to add a secret to kubeflow namespace, containing GAR credentials (use service account that is authenticated to pull images from GAR). This secret also currently needs to be manually added to kubeflow service account **default-editor** in user's kubeflow namespace (see dev info for details).
 ```sh
 gcloud iam service-accounts keys create key_pull.json --iam-account={SERVICE_ACCOUNT}
 kubectl -n=kubeflow create secret docker-registry regcred-gar \
   --docker-server europe-west3-docker.pkg.dev \
   --docker-username _json_key \
   --docker-password="$(cat key_pull.json)"
+kubectl patch serviceaccount default-editor -n {USER_NAMESPACE} \
+  --patch '{"imagePullSecrets": [{"name": "regcred-gar"}]}'
 ```
 
 There are 2 ways to deploy the obtained backend images in a cluster:
@@ -34,7 +36,7 @@ To create KFP backend images (apiserver, controller, cacheserver, persistenceage
 
 The GitHub actions workflow builds these images automatically and pushes them to GAR. This uses a preconfigured service account for Google Cloud with a role **roles/artifactregistry.writer**. Authentication details (described by GCP_SA_KEY secret on GitHub) can be obtained by running `gcloud iam service-accounts keys create key.json --iam-account=github@{GCP_PROJECT_NAME}.iam.gserviceaccount.com` (replace {GCP_PROJECT_NAME} with our project name).
 
-GitHub workflows uses keyword "[apiserver]" anywhere in commit message to trigger apiserver build, uses "[backend-all]" keyword to build all backend images, same logic for launcher and driver images.
+GitHub workflows use keyword "[apiserver]" anywhere in commit message to trigger apiserver build, uses "[backend-all]" keyword to build all backend images, same logic for launcher and driver images.
 
 ### Script Details
 Python script does the following:
@@ -48,3 +50,12 @@ Example usage:
 python3 build_backend_images --images "apiserver" --commit-message "Build:"
 python3 build_backend_images --images "all" --commit-message "Build:"
 ```
+
+### Patching default-editor service account
+When a kubeflow pipeline pod is created in user's kubeflow namespace from an argo workflow, backend launcher-v2 image is pulled inside this pod. If we want to use a custom launcher image that we want to pull from GAR, we need to tell the pod the corresponding secret for image pull. In kubeflow, this secret is passed to pod from **default-editor** service account in user's kubeflow namespace. That is why we currently need to manually update the secrets in this sa.
+
+For future automation, if GAR custom images are ubiquitous in prokube, it will make sense to automatically add the *regcred-gar* secret to each namespace and service account. This can be implemented by patching the scripts that do the same for the *regcred* secret:
+
+https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/on_startup.sh#L29
+https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/add_docker_secret.sh#L43
+https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/update_docker_secret.sh#L53
