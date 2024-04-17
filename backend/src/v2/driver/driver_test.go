@@ -1504,7 +1504,7 @@ func Test_extendPodSpecPatch_SharedMemory(t *testing.T) {
 				},
 			},
 		},
-        {
+		{
 			"Valid - Shared Memory Enabled without size",
 			&kubernetesplatform.KubernetesExecutorConfig{
 				EnabledSharedMemory: &kubernetesplatform.EnabledSharedMemory{
@@ -1518,7 +1518,7 @@ func Test_extendPodSpecPatch_SharedMemory(t *testing.T) {
 						Name: "shm-vol-no-size",
 						VolumeSource: k8score.VolumeSource{
 							EmptyDir: &k8score.EmptyDirVolumeSource{
-								Medium:    k8score.StorageMediumMemory,
+								Medium: k8score.StorageMediumMemory,
 							},
 						},
 					},
