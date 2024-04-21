@@ -14,15 +14,32 @@ These commands push the code to GitHub and trigger image build using GitHub work
 The code gets pushed to the current upstream branch. If you want to add custom commit message, see Python script details below. 
   
 ### Deploy to Cluster
-First, you need to add a secret to kubeflow namespace, containing GAR credentials (use service account that is authenticated to pull images from GAR). This secret also currently needs to be manually added to kubeflow service account **default-editor** in user's kubeflow namespace (see dev info for details).
+First step is to get credentials for service account with GAR pull permissions:
 ```sh
 gcloud iam service-accounts keys create key_pull.json --iam-account={SERVICE_ACCOUNT}
-kubectl -n=kubeflow create secret docker-registry regcred-gar \
-  --docker-server europe-west3-docker.pkg.dev \
-  --docker-username _json_key \
-  --docker-password="$(cat key_pull.json)"
-kubectl patch serviceaccount default-editor -n {USER_NAMESPACE} \
-  --patch '{"imagePullSecrets": [{"name": "regcred-gar"}]}'
+```
+Then, GAR credentials must be added to the regcred secret. You can patch the secret in the **ops** namespace to trigger secret update in all other namespaces. Other possibility is to just update the regcred secret in the **kubeflow** and kubeflow user namespaces (change the namespace in the last of the following commands).
+```sh
+# create a dry-run secret with gar credentials, get decoded credentials
+gar_auths=$(kubectl create secret --dry-run=client -o json docker-registry regcred-gar \
+    --docker-server europe-west3-docker.pkg.dev \
+    --docker-username _json_key \
+    --docker-password="$(cat key_pull.json)" | \
+    jq -r '.data[".dockerconfigjson"]' | \
+    base64 -d | \
+    jq -r ".auths")
+
+# concat decoded credentials with gitlab credentials, encode them
+result=$(kubectl get secret -n ops regcred -o json | \
+    jq -r '.data[".dockerconfigjson"]' | \
+    base64 -d | \
+    jq -r --argjson auths "$gar_auths" '.auths += $auths' | \
+    base64)
+
+# patch secret in ops namespace with encoded credentials
+# triggers regcred update in all namespaces
+kubectl patch secret regcred -n ops --type='json' \
+    -p='[{"op":"replace","path":"/data/.dockerconfigjson","value":"'"$result"'"}]'
 ```
 
 There are 2 ways to deploy the obtained backend images in a cluster:
@@ -51,11 +68,8 @@ python3 build_backend_images --images "apiserver" --commit-message "Build:"
 python3 build_backend_images --images "all" --commit-message "Build:"
 ```
 
-### Patching default-editor service account
-When a kubeflow pipeline pod is created in user's kubeflow namespace from an argo workflow, backend launcher-v2 image is pulled inside this pod. If we want to use a custom launcher image that we want to pull from GAR, we need to tell the pod the corresponding secret for image pull. In kubeflow, this secret is passed to pod from **default-editor** service account in user's kubeflow namespace. That is why we currently need to manually update the secrets in this sa.
+### Patching regcred secret
+When a kubeflow pipeline pod is created in user's kubeflow namespace from an argo workflow, backend launcher-v2 image is pulled inside this pod. If we want to use a custom launcher image that we want to pull from GAR, we need to tell the pod the corresponding secret for image pull. In kubeflow, this secret is passed to pod from **default-editor** service account in user's kubeflow namespace. This service account tells the pod to use **regcred** as the default imagePullSecret. Therefore, GAR authentication is managed by this secret.
 
-For future automation, if GAR custom images are ubiquitous in prokube, it will make sense to automatically add the *regcred-gar* secret to each namespace and service account. This can be implemented by patching the scripts that do the same for the *regcred* secret:
-
-https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/on_startup.sh#L29
-https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/add_docker_secret.sh#L43
-https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/update_docker_secret.sh#L53
+New docker credentials can be added to the existing regcred secret. If we patch this secret in the **ops** namespace, we will trigger the following script to update regcred secret in all other namespaces:
+https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/update_docker_secret.sh
