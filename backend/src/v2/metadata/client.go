@@ -250,6 +250,11 @@ func (e *Execution) TaskName() string {
 	if e == nil {
 		return ""
 	}
+    Println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+    Println("keyTaskName: ", keyTaskName)
+    Println("e.execution.GetCustomProperties(): ", e.execution.GetCustomProperties())
+    Println("e.execution.GetCustomProperties()[keyTaskName]: ", e.execution.GetCustomProperties()[keyTaskName])
+    Println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
 	return e.execution.GetCustomProperties()[keyTaskName].GetStringValue()
 }
 

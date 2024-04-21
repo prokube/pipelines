@@ -1126,13 +1126,13 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 			if err != nil {
 				return nil, paramError(err)
 			}
-            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX")
             fmt.Println("Case 1")
             fmt.Println("taskOutput.getProducerTask: ", taskOutput.GetProducerTask())
             fmt.Println("tasks: ", tasks)
 			producer, ok := tasks[taskOutput.GetProducerTask()]
             fmt.Println("producer task: ", producer)
-            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX")
 			if !ok {
 				return nil, paramError(fmt.Errorf("cannot find producer task %q", taskOutput.GetProducerTask()))
 			}
