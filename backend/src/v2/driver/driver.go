@@ -321,7 +321,17 @@ func Container(ctx context.Context, opts Options, mlmd *metadata.Client, cacheCl
 		return execution, nil
 	}
 
+    // let's print all the opts which are used as arguments for the initialization of the podSpecPatch
+
+    fmt.Println("opts.Container: ", opts.Container)
+    fmt.Println("opts.Component: ", opts.Component)
+    fmt.Println("executorInput: ", executorInput)
+    fmt.Println("execution.ID: ", execution.ID)
+    fmt.Println("opts.PipelineName: ", opts.PipelineName)
+    fmt.Println("opts.RunID: ", opts.RunID)
+
 	podSpec, err := initPodSpecPatch(opts.Container, opts.Component, executorInput, execution.ID, opts.PipelineName, opts.RunID)
+    fmt.Println("podSpec: ", podSpec)
 	if err != nil {
 		return execution, err
 	}
@@ -1075,6 +1085,14 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 		if err != nil {
 			return nil, err
 		}
+		// print the ctx, dag, pipeline
+		fmt.Println("ctx: ", ctx)
+		fmt.Println("dag: ", dag)
+		fmt.Println("pipeline: ", pipeline)
+
+		// print the tasks
+		fmt.Println("tasks: ", tasks)
+
 		tasksCache = tasks
 		return tasks, nil
 	}
@@ -1095,6 +1113,8 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 			inputs.ParameterValues[name] = v
 
 		case *pipelinespec.TaskInputsSpec_InputParameterSpec_TaskOutputParameter:
+			// print the current's function name
+			fmt.Println("case: *pipelinespec.TaskInputsSpec_InputParameterSpec_TaskOutputParameter:")
 			taskOutput := paramSpec.GetTaskOutputParameter()
 			if taskOutput.GetProducerTask() == "" {
 				return nil, paramError(fmt.Errorf("producer task is empty"))
@@ -1106,7 +1126,13 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 			if err != nil {
 				return nil, paramError(err)
 			}
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+            fmt.Println("Case 1")
+            fmt.Println("taskOutput.getProducerTask: ", taskOutput.GetProducerTask())
+            fmt.Println("tasks: ", tasks)
 			producer, ok := tasks[taskOutput.GetProducerTask()]
+            fmt.Println("producer task: ", producer)
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX"
 			if !ok {
 				return nil, paramError(fmt.Errorf("cannot find producer task %q", taskOutput.GetProducerTask()))
 			}
@@ -1151,6 +1177,7 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 			inputs.Artifacts[name] = v
 
 		case *pipelinespec.TaskInputsSpec_InputArtifactSpec_TaskOutputArtifact:
+			fmt.Println("case: *pipelinespec.TaskInputsSpec_InputArtifactSpec_TaskOutputArtifact:")
 			taskOutput := artifactSpec.GetTaskOutputArtifact()
 			if taskOutput.GetProducerTask() == "" {
 				return nil, artifactError(fmt.Errorf("producer task is empty"))
@@ -1162,7 +1189,14 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
 			if err != nil {
 				return nil, artifactError(err)
 			}
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            fmt.Println("Case 2")
+            fmt.Println("taskOutput.getProducerTask: ", taskOutput.GetProducerTask())
 			producer, ok := tasks[taskOutput.GetProducerTask()]
+			fmt.Println("tasks: ", tasks)
+			fmt.Println("producer task: ", producer)
+            fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX")
+
 			if !ok {
 				return nil, artifactError(fmt.Errorf("cannot find producer task %q", taskOutput.GetProducerTask()))
 			}
