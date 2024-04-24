@@ -252,10 +252,15 @@ func (e *Execution) TaskName() string {
 	}
     fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
     fmt.Println("keyTaskName: ", keyTaskName)
+    // print all keys and values for debugging
+    for key, value := range e.execution.GetCustomProperties() {
+        fmt.Println("Key:", key, "Value:", value)
+    }
     fmt.Println("e.execution.GetCustomProperties(): ", e.execution.GetCustomProperties())
     fmt.Println("e.execution.GetCustomProperties()[keyTaskName]: ", e.execution.GetCustomProperties()[keyTaskName])
+    fmt.Println("e.execution.GetCustomProperties()[keyDisplayName]: ", e.execution.GetCustomProperties()[keyDisplayName])
     fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-	return e.execution.GetCustomProperties()[keyTaskName].GetStringValue()
+	return e.execution.GetCustomProperties()[keyDisplayName].GetStringValue()
 }
 
 func (e *Execution) FingerPrint() string {

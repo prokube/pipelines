@@ -1131,6 +1131,11 @@ func resolveInputs(ctx context.Context, dag *metadata.DAG, iterationIndex *int, 
             fmt.Println("taskOutput.getProducerTask: ", taskOutput.GetProducerTask())
             fmt.Println("tasks: ", tasks)
 			producer, ok := tasks[taskOutput.GetProducerTask()]
+            // print the map for each key and value
+            for key, value := range tasks {
+                fmt.Println("key: ", key)
+                fmt.Println("value: ", value)
+            }
             fmt.Println("producer task: ", producer)
             fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXXXXX")
 			if !ok {
