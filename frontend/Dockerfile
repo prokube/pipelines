@@ -25,7 +25,7 @@ RUN mkdir -p ./server/dist && \
 # concatenate them to one file under ./src/server
 RUN ./scripts/yarn-licenses.sh
 
-FROM node:14.21.3-alpine3.17
+FROM node:22.1.0-alpine3.19
 
 COPY --from=build ./src/frontend/server /server
 COPY --from=build ./src/frontend/build /client
