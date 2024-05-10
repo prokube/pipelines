@@ -85,3 +85,6 @@ API generator image is defined in [Dockerfile](`./Dockerfile`). If you need to u
 1. Push the new container by running `docker push gcr.io/ml-pipeline-test/api-generator:latest` (requires to be [authenticated](https://cloud.google.com/container-registry/docs/advanced-authentication)).
 1. Update the `PREBUILT_REMOTE_IMAGE` variable in the [Makefile](./Makefile) to point to your new image.
 1. Similarly, push a new version of the release tools image to `gcr.io/ml-pipeline-test/release:latest` and run `make push` in [test/release/Makefile](../../test/release/Makefile).
+
+
+
