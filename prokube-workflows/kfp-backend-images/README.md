@@ -73,3 +73,4 @@ When a kubeflow pipeline pod is created in user's kubeflow namespace from an arg
 
 New docker credentials can be added to the existing regcred secret. If we patch this secret in the **ops** namespace, we will trigger the following script to update regcred secret in all other namespaces:
 https://github.com/prokube-ai/paas/blob/2b3bdf2ec68f304d1e4383f6ce5032e167ac0de8/ops/secret-operator/hooks/update_docker_secret.sh
+
