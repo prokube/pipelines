@@ -58,6 +58,7 @@ type S3Params struct {
 	DisableSSL     bool
 	ForcePathStyle bool
 	MaxRetries     int
+	SPIFFEServerID string
 }
 
 func (b *Config) bucketURL() string {
@@ -220,6 +221,9 @@ func StructuredS3Params(p map[string]string) (*S3Params, error) {
 			return nil, err
 		}
 		sparams.MaxRetries = int(intVal)
+	}
+	if val, ok := p["spiffeServerID"]; ok {
+		sparams.SPIFFEServerID = val
 	}
 	return sparams, nil
 }

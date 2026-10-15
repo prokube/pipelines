@@ -258,7 +258,7 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 	if err != nil {
 		return nil, err
 	}
-	s3Config, err := config.LoadDefaultConfig(ctx,
+	loadOptions := []func(*config.LoadOptions) error{
 		config.WithRetryer(func() aws.Retryer {
 			// Use standard retry logic with exponential backoff for transient S3 connection failures.
 			// The standard retryer implements exponential backoff with jitter, starting with a base delay
@@ -267,7 +267,15 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 		}),
 		config.WithCredentialsProvider(*creds),
 		config.WithRegion(*aws.String(params.Region)),
-	)
+	}
+	httpClient, err := spiffeS3HTTPClient(ctx, params.SPIFFEServerID)
+	if err != nil {
+		return nil, err
+	}
+	if httpClient != nil {
+		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))
+	}
+	s3Config, err := config.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
 		return nil, err
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/kubeflow/pipelines/backend/src/v2/client_manager"
 	"github.com/kubeflow/pipelines/backend/src/v2/component"
 	"github.com/kubeflow/pipelines/backend/src/v2/config"
+	"github.com/kubeflow/pipelines/backend/src/v2/objectstore"
 )
 
 // TODO: use https://github.com/spf13/cobra as a framework to create more complex CLI tools with subcommands.
@@ -61,8 +62,6 @@ func main() {
 
 func run() error {
 	flag.Parse()
-	ctx := context.Background()
-
 	glog.Infof("Setting log level to: '%s'", *logLevel)
 	err := flag.Set("v", *logLevel)
 	if err != nil {
@@ -75,6 +74,13 @@ func run() error {
 		// early
 		return component.CopyThisBinary(*copy)
 	}
+	ctx, closeSPIFFE := objectstore.WithSPIFFEWorkloadAPI(context.Background())
+	defer func() {
+		if err := closeSPIFFE(); err != nil {
+			glog.Warningf("Failed to close SPIFFE Workload API source: %v", err)
+		}
+	}()
+
 	namespace, err := config.InPodNamespace()
 	if err != nil {
 		return err

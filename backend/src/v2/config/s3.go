@@ -31,6 +31,7 @@ type S3ProviderConfig struct {
 type S3ProviderDefault struct {
 	Endpoint    string         `json:"endpoint"`
 	Credentials *S3Credentials `json:"credentials"`
+	TLS         *S3TLSConfig   `json:"tls"`
 	// optional for any non aws s3 provider
 	Region string `json:"region"`
 	// optional
@@ -48,7 +49,8 @@ type S3Credentials struct {
 	SecretRef *S3SecretRef `json:"secretRef"`
 }
 type S3Override struct {
-	Endpoint string `json:"endpoint"`
+	Endpoint string       `json:"endpoint"`
+	TLS      *S3TLSConfig `json:"tls"`
 	// optional for any non aws s3 provider
 	Region string `json:"region"`
 	// optional
@@ -67,6 +69,14 @@ type S3SecretRef struct {
 	// The k8s secret "Key" for "Artifact SecretKey" and "Artifact AccessKey"
 	AccessKeyKey string `json:"accessKeyKey"`
 	SecretKeyKey string `json:"secretKeyKey"`
+}
+
+type S3TLSConfig struct {
+	SPIFFE *S3SPIFFEConfig `json:"spiffe"`
+}
+
+type S3SPIFFEConfig struct {
+	ServerID string `json:"serverID"`
 }
 
 func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionInfo, error) {
@@ -101,6 +111,7 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 
 	params["endpoint"] = p.Default.Endpoint
 	params["region"] = p.Default.Region
+	setSPIFFEServerID(params, p.Default.TLS)
 
 	if p.Default.DisableSSL == nil {
 		params["disableSSL"] = strconv.FormatBool(false)
@@ -150,6 +161,10 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		if override.MaxRetries != nil {
 			sessionInfo.Params["maxRetries"] = strconv.FormatInt(int64(*p.Default.MaxRetries), 10)
 		}
+		if override.TLS != nil {
+			delete(params, "spiffeServerID")
+			setSPIFFEServerID(params, override.TLS)
+		}
 		if override.Credentials == nil {
 			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override credentials"))
 		}
@@ -169,6 +184,12 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		}
 	}
 	return sessionInfo, nil
+}
+
+func setSPIFFEServerID(params map[string]string, tls *S3TLSConfig) {
+	if tls != nil && tls.SPIFFE != nil && tls.SPIFFE.ServerID != "" {
+		params["spiffeServerID"] = tls.SPIFFE.ServerID
+	}
 }
 
 // getOverrideByPrefix returns first matching bucketname and prefix in overrides
