@@ -58,6 +58,14 @@ type S3Params struct {
 	DisableSSL     bool
 	ForcePathStyle bool
 	MaxRetries     int
+	Spiffe         *S3SpiffeParams
+}
+
+type S3SpiffeParams struct {
+	Audience        string
+	RoleARN         string
+	RoleSessionName string
+	STSEndpoint     string
 }
 
 func (b *Config) bucketURL() string {
@@ -220,6 +228,18 @@ func StructuredS3Params(p map[string]string) (*S3Params, error) {
 			return nil, err
 		}
 		sparams.MaxRetries = int(intVal)
+	}
+	_, hasAudience := p["spiffeAudience"]
+	_, hasRoleARN := p["spiffeRoleArn"]
+	_, hasRoleSessionName := p["spiffeRoleSessionName"]
+	_, hasSTSEndpoint := p["spiffeStsEndpoint"]
+	if hasAudience || hasRoleARN || hasRoleSessionName || hasSTSEndpoint {
+		sparams.Spiffe = &S3SpiffeParams{
+			Audience:        p["spiffeAudience"],
+			RoleARN:         p["spiffeRoleArn"],
+			RoleSessionName: p["spiffeRoleSessionName"],
+			STSEndpoint:     p["spiffeStsEndpoint"],
+		}
 	}
 	return sparams, nil
 }

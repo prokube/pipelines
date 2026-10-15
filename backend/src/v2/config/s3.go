@@ -44,8 +44,16 @@ type S3ProviderDefault struct {
 type S3Credentials struct {
 	// optional
 	FromEnv bool `json:"fromEnv"`
-	// if FromEnv is False then SecretRef is required
+	// if FromEnv is false then exactly one of SecretRef or Spiffe is required
 	SecretRef *S3SecretRef `json:"secretRef"`
+	Spiffe    *S3Spiffe    `json:"spiffe"`
+}
+
+type S3Spiffe struct {
+	Audience        string `json:"audience"`
+	RoleARN         string `json:"roleArn"`
+	RoleSessionName string `json:"roleSessionName"`
+	STSEndpoint     string `json:"stsEndpoint"`
 }
 type S3Override struct {
 	Endpoint string `json:"endpoint"`
@@ -84,10 +92,26 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 
 	params := map[string]string{}
 
-	// 1. If provider config did not have a matching configuration for the provider inferred from pipelineroot OR
-	// 2. If a user has provided query parameters
-	// then we use blob.OpenBucket(ctx, config.bucketURL()) by setting "FromEnv = True"
-	if (p.Default == nil && p.Overrides == nil) || queryString != "" {
+	// If provider config did not have a matching configuration for the provider inferred from pipelineroot,
+	// use blob.OpenBucket(ctx, config.bucketURL()) by setting "FromEnv = True".
+	if p.Default == nil && p.Overrides == nil {
+		params["fromEnv"] = strconv.FormatBool(true)
+		return objectstore.SessionInfo{
+			Provider: "s3",
+			Params:   params,
+		}, nil
+	}
+	if queryString != "" {
+		var credentials *S3Credentials
+		if p.Default != nil {
+			credentials = p.Default.Credentials
+		}
+		if override := p.getOverrideByPrefix(bucketName, bucketPrefix); override != nil {
+			credentials = override.Credentials
+		}
+		if credentials != nil && credentials.Spiffe != nil {
+			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("query parameters are not supported with spiffe credentials"))
+		}
 		params["fromEnv"] = strconv.FormatBool(true)
 		return objectstore.SessionInfo{
 			Provider: "s3",
@@ -97,6 +121,9 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 
 	if p.Default == nil || p.Default.Credentials == nil {
 		return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing default credentials"))
+	}
+	if !p.Default.Credentials.FromEnv && p.Default.Credentials.SecretRef == nil && p.Default.Credentials.Spiffe == nil {
+		return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing default secretref or spiffe"))
 	}
 
 	params["endpoint"] = p.Default.Endpoint
@@ -119,11 +146,8 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		params["maxRetries"] = strconv.FormatInt(int64(*p.Default.MaxRetries), 10)
 	}
 
-	params["fromEnv"] = strconv.FormatBool(p.Default.Credentials.FromEnv)
-	if !p.Default.Credentials.FromEnv {
-		params["secretName"] = p.Default.Credentials.SecretRef.SecretName
-		params["accessKeyKey"] = p.Default.Credentials.SecretRef.AccessKeyKey
-		params["secretKeyKey"] = p.Default.Credentials.SecretRef.SecretKeyKey
+	if err := applyS3Credentials(params, p.Default.Credentials); err != nil {
+		return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("invalid default credentials: %w", err))
 	}
 
 	// Set defaults
@@ -153,22 +177,54 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		if override.Credentials == nil {
 			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override credentials"))
 		}
-		params["fromEnv"] = strconv.FormatBool(override.Credentials.FromEnv)
-		if !override.Credentials.FromEnv {
-			if override.Credentials.SecretRef == nil {
-				return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override secretref"))
-			}
-			params["secretName"] = override.Credentials.SecretRef.SecretName
-			params["accessKeyKey"] = override.Credentials.SecretRef.AccessKeyKey
-			params["secretKeyKey"] = override.Credentials.SecretRef.SecretKeyKey
-		} else {
-			// Don't need a secret if pulling from Env
-			delete(params, "secretName")
-			delete(params, "accessKeyKey")
-			delete(params, "secretKeyKey")
+		if !override.Credentials.FromEnv && override.Credentials.SecretRef == nil && override.Credentials.Spiffe == nil {
+			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override secretref or spiffe"))
+		}
+		if err := applyS3Credentials(params, override.Credentials); err != nil {
+			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("invalid override credentials: %w", err))
 		}
 	}
 	return sessionInfo, nil
+}
+
+func applyS3Credentials(params map[string]string, credentials *S3Credentials) error {
+	for _, key := range []string{
+		"secretName", "accessKeyKey", "secretKeyKey", "spiffeAudience", "spiffeRoleArn",
+		"spiffeRoleSessionName", "spiffeStsEndpoint",
+	} {
+		delete(params, key)
+	}
+
+	params["fromEnv"] = strconv.FormatBool(credentials.FromEnv)
+	if credentials.FromEnv {
+		if credentials.Spiffe != nil {
+			return fmt.Errorf("fromEnv cannot be combined with spiffe")
+		}
+		return nil
+	}
+	if credentials.SecretRef != nil && credentials.Spiffe != nil {
+		return fmt.Errorf("secretRef and spiffe are mutually exclusive")
+	}
+	if credentials.Spiffe != nil {
+		if credentials.Spiffe.Audience == "" {
+			return fmt.Errorf("missing spiffe audience")
+		}
+		if credentials.Spiffe.RoleARN == "" {
+			return fmt.Errorf("missing spiffe roleArn")
+		}
+		params["spiffeAudience"] = credentials.Spiffe.Audience
+		params["spiffeRoleArn"] = credentials.Spiffe.RoleARN
+		params["spiffeRoleSessionName"] = credentials.Spiffe.RoleSessionName
+		params["spiffeStsEndpoint"] = credentials.Spiffe.STSEndpoint
+		return nil
+	}
+	if credentials.SecretRef == nil {
+		return fmt.Errorf("missing secretRef or spiffe")
+	}
+	params["secretName"] = credentials.SecretRef.SecretName
+	params["accessKeyKey"] = credentials.SecretRef.AccessKeyKey
+	params["secretKeyKey"] = credentials.SecretRef.SecretKeyKey
+	return nil
 }
 
 // getOverrideByPrefix returns first matching bucketname and prefix in overrides
