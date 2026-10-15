@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -314,6 +315,11 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 
 type spiffeJWTFetcher func(context.Context, string, string) ([]byte, error)
 
+const (
+	spiffeJWTFetchAttempts = 20
+	spiffeJWTFetchInterval = 500 * time.Millisecond
+)
+
 type spiffeWebIdentityProvider struct {
 	client          stscreds.AssumeRoleWithWebIdentityAPIClient
 	fetchToken      spiffeJWTFetcher
@@ -324,7 +330,7 @@ type spiffeWebIdentityProvider struct {
 }
 
 func (p *spiffeWebIdentityProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
-	token, err := p.fetchToken(ctx, p.socket, p.audience)
+	token, err := fetchSpiffeJWTWithRetry(ctx, p.fetchToken, p.socket, p.audience, spiffeJWTFetchAttempts, spiffeJWTFetchInterval)
 	if err != nil {
 		return aws.Credentials{}, fmt.Errorf("failed to fetch SPIFFE JWT-SVID: %w", err)
 	}
@@ -332,6 +338,28 @@ func (p *spiffeWebIdentityProvider) Retrieve(ctx context.Context) (aws.Credentia
 		options.RoleSessionName = p.roleSessionName
 	})
 	return provider.Retrieve(ctx)
+}
+
+func fetchSpiffeJWTWithRetry(ctx context.Context, fetchToken spiffeJWTFetcher, socket, audience string, attempts int, interval time.Duration) ([]byte, error) {
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var token []byte
+		token, err = fetchToken(ctx, socket, audience)
+		if err == nil {
+			return token, nil
+		}
+		if attempt == attempts {
+			break
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, fmt.Errorf("failed after %d attempts: %w", attempts, err)
 }
 
 type identityToken []byte

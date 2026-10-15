@@ -383,6 +383,45 @@ func TestSpiffeWebIdentityCredentialsExchangeAndRefresh(t *testing.T) {
 	assert.Equal(t, 2, requests)
 }
 
+func TestFetchSpiffeJWTWithRetry(t *testing.T) {
+	fetches := 0
+	token, err := fetchSpiffeJWTWithRetry(
+		context.Background(),
+		func(_ context.Context, socket, audience string) ([]byte, error) {
+			fetches++
+			assert.Equal(t, "unix:///tmp/spire-agent.sock", socket)
+			assert.Equal(t, "sts-audience", audience)
+			if fetches < 3 {
+				return nil, fmt.Errorf("no identity issued")
+			}
+			return []byte("jwt"), nil
+		},
+		"unix:///tmp/spire-agent.sock",
+		"sts-audience",
+		3,
+		time.Millisecond,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("jwt"), token)
+	assert.Equal(t, 3, fetches)
+}
+
+func TestFetchSpiffeJWTWithRetryHonorsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := fetchSpiffeJWTWithRetry(
+		ctx,
+		func(context.Context, string, string) ([]byte, error) {
+			return nil, fmt.Errorf("no identity issued")
+		},
+		"unix:///tmp/spire-agent.sock",
+		"sts-audience",
+		3,
+		time.Hour,
+	)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestSpiffeWebIdentityCredentialsRequireWorkloadAPISocket(t *testing.T) {
 	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "")
 	_, err := newSpiffeWebIdentityCredentials(&S3Params{
