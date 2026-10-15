@@ -251,6 +251,17 @@ func Test_createS3BucketSession(t *testing.T) {
 			expectValidClient: false,
 		},
 		{
+			msg: "Bucket using credentials from environment",
+			ns:  "testnamespace",
+			sessionInfo: &SessionInfo{
+				Provider: "s3",
+				Params: map[string]string{
+					"fromEnv": "true",
+				},
+			},
+			expectValidClient: false,
+		},
+		{
 			msg: "Bucket with session but secret doesn't exist",
 			ns:  "testnamespace",
 			sessionInfo: &SessionInfo{
