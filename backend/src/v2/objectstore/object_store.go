@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -244,6 +245,10 @@ func getGCSTokenClient(ctx context.Context, namespace string, sessionInfo *Sessi
 }
 
 func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *SessionInfo, client kubernetes.Interface) (*s3.Client, error) {
+	return createS3BucketSessionWithHTTPClient(ctx, namespace, sessionInfo, client, nil)
+}
+
+func createS3BucketSessionWithHTTPClient(ctx context.Context, namespace string, sessionInfo *SessionInfo, client kubernetes.Interface, httpClientOverride *http.Client) (*s3.Client, error) {
 	if sessionInfo == nil {
 		return nil, nil
 	}
@@ -251,12 +256,31 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 	if err != nil {
 		return nil, err
 	}
-	if params.FromEnv {
-		return nil, nil
-	}
-	creds, err := getS3BucketCredential(ctx, client, namespace, params.SecretName, params.SecretKeyKey, params.AccessKeyKey)
-	if err != nil {
-		return nil, err
+	var creds aws.CredentialsProvider
+	if params.Unsigned {
+		if params.FromEnv || params.SecretName != "" || params.AccessKeyKey != "" || params.SecretKeyKey != "" {
+			return nil, fmt.Errorf("unsigned and credentials are mutually exclusive")
+		}
+		if params.SPIFFEServerID == "" {
+			return nil, fmt.Errorf("unsigned requires a SPIFFE server ID")
+		}
+		if params.DisableSSL {
+			return nil, fmt.Errorf("unsigned requires SSL")
+		}
+		params.Endpoint, err = NormalizeUnsignedS3Endpoint(params.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		creds = aws.AnonymousCredentials{}
+	} else {
+		if params.FromEnv {
+			return nil, nil
+		}
+		staticCreds, err := getS3BucketCredential(ctx, client, namespace, params.SecretName, params.SecretKeyKey, params.AccessKeyKey)
+		if err != nil {
+			return nil, err
+		}
+		creds = *staticCreds
 	}
 	loadOptions := []func(*config.LoadOptions) error{
 		config.WithRetryer(func() aws.Retryer {
@@ -265,12 +289,15 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 			// and doubling the wait time between retries up to a maximum, helping to avoid thundering herd problems.
 			return retry.AddWithMaxAttempts(retry.NewStandard(), params.MaxRetries)
 		}),
-		config.WithCredentialsProvider(*creds),
+		config.WithCredentialsProvider(creds),
 		config.WithRegion(*aws.String(params.Region)),
 	}
-	httpClient, err := spiffeS3HTTPClient(ctx, params.SPIFFEServerID)
-	if err != nil {
-		return nil, err
+	httpClient := httpClientOverride
+	if httpClient == nil {
+		httpClient, err = spiffeS3HTTPClient(ctx, params.SPIFFEServerID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if httpClient != nil {
 		loadOptions = append(loadOptions, config.WithHTTPClient(httpClient))

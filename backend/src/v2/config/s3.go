@@ -31,6 +31,7 @@ type S3ProviderConfig struct {
 type S3ProviderDefault struct {
 	Endpoint    string         `json:"endpoint"`
 	Credentials *S3Credentials `json:"credentials"`
+	Unsigned    bool           `json:"unsigned"`
 	TLS         *S3TLSConfig   `json:"tls"`
 	// optional for any non aws s3 provider
 	Region string `json:"region"`
@@ -51,6 +52,7 @@ type S3Credentials struct {
 type S3Override struct {
 	Endpoint string       `json:"endpoint"`
 	TLS      *S3TLSConfig `json:"tls"`
+	Unsigned bool         `json:"unsigned"`
 	// optional for any non aws s3 provider
 	Region string `json:"region"`
 	// optional
@@ -87,6 +89,7 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 	bucketName := bucketConfig.BucketName
 	bucketPrefix := bucketConfig.Prefix
 	queryString := bucketConfig.QueryString
+	override := p.getOverrideByPrefix(bucketName, bucketPrefix)
 
 	invalidConfigErr := func(err error) error {
 		return fmt.Errorf("invalid provider config: %w", err)
@@ -94,10 +97,16 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 
 	params := map[string]string{}
 
-	// 1. If provider config did not have a matching configuration for the provider inferred from pipelineroot OR
-	// 2. If a user has provided query parameters
-	// then we use blob.OpenBucket(ctx, config.bucketURL()) by setting "FromEnv = True"
-	if (p.Default == nil && p.Overrides == nil) || queryString != "" {
+	// Without provider config, or with query parameters in signed mode, use
+	// blob.OpenBucket(ctx, config.bucketURL()) by setting "FromEnv = True".
+	if p.Default == nil && p.Overrides == nil {
+		params["fromEnv"] = strconv.FormatBool(true)
+		return objectstore.SessionInfo{
+			Provider: "s3",
+			Params:   params,
+		}, nil
+	}
+	if queryString != "" && !effectiveUnsigned(p.Default, override) {
 		params["fromEnv"] = strconv.FormatBool(true)
 		return objectstore.SessionInfo{
 			Provider: "s3",
@@ -105,7 +114,7 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		}, nil
 	}
 
-	if p.Default == nil || p.Default.Credentials == nil {
+	if p.Default == nil {
 		return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing default credentials"))
 	}
 
@@ -130,11 +139,8 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 		params["maxRetries"] = strconv.FormatInt(int64(*p.Default.MaxRetries), 10)
 	}
 
-	params["fromEnv"] = strconv.FormatBool(p.Default.Credentials.FromEnv)
-	if !p.Default.Credentials.FromEnv {
-		params["secretName"] = p.Default.Credentials.SecretRef.SecretName
-		params["accessKeyKey"] = p.Default.Credentials.SecretRef.AccessKeyKey
-		params["secretKeyKey"] = p.Default.Credentials.SecretRef.SecretKeyKey
+	if err := setS3AuthParams(params, p.Default.Unsigned, p.Default.Credentials, "default"); err != nil {
+		return objectstore.SessionInfo{}, invalidConfigErr(err)
 	}
 
 	// Set defaults
@@ -144,7 +150,6 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 	}
 
 	// If there's a matching override, then override defaults with provided configs
-	override := p.getOverrideByPrefix(bucketName, bucketPrefix)
 	if override != nil {
 		if override.Endpoint != "" {
 			sessionInfo.Params["endpoint"] = override.Endpoint
@@ -165,30 +170,81 @@ func (p S3ProviderConfig) ProvideSessionInfo(path string) (objectstore.SessionIn
 			delete(params, "spiffeServerID")
 			setSPIFFEServerID(params, override.TLS)
 		}
-		if override.Credentials == nil {
-			return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override credentials"))
+		if err := setS3AuthParams(params, override.Unsigned, override.Credentials, "override"); err != nil {
+			return objectstore.SessionInfo{}, invalidConfigErr(err)
 		}
-		params["fromEnv"] = strconv.FormatBool(override.Credentials.FromEnv)
-		if !override.Credentials.FromEnv {
-			if override.Credentials.SecretRef == nil {
-				return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("missing override secretref"))
-			}
-			params["secretName"] = override.Credentials.SecretRef.SecretName
-			params["accessKeyKey"] = override.Credentials.SecretRef.AccessKeyKey
-			params["secretKeyKey"] = override.Credentials.SecretRef.SecretKeyKey
-		} else {
-			// Don't need a secret if pulling from Env
-			delete(params, "secretName")
-			delete(params, "accessKeyKey")
-			delete(params, "secretKeyKey")
-		}
+	}
+	if err := validateUnsignedS3Params(params); err != nil {
+		return objectstore.SessionInfo{}, invalidConfigErr(err)
+	}
+	if queryString != "" {
+		return objectstore.SessionInfo{}, invalidConfigErr(fmt.Errorf("unsigned does not support S3 query parameters"))
 	}
 	return sessionInfo, nil
 }
 
+func effectiveUnsigned(defaultConfig *S3ProviderDefault, override *S3Override) bool {
+	if override != nil {
+		return override.Unsigned
+	}
+	return defaultConfig != nil && defaultConfig.Unsigned
+}
+
+func setS3AuthParams(params map[string]string, unsigned bool, credentials *S3Credentials, configName string) error {
+	delete(params, "unsigned")
+	delete(params, "fromEnv")
+	delete(params, "secretName")
+	delete(params, "accessKeyKey")
+	delete(params, "secretKeyKey")
+
+	if unsigned && credentials != nil {
+		return fmt.Errorf("%s unsigned and credentials are mutually exclusive", configName)
+	}
+	if unsigned {
+		params["unsigned"] = strconv.FormatBool(true)
+		return nil
+	}
+	if credentials == nil {
+		return fmt.Errorf("missing %s credentials", configName)
+	}
+
+	params["fromEnv"] = strconv.FormatBool(credentials.FromEnv)
+	if credentials.FromEnv {
+		return nil
+	}
+	if credentials.SecretRef == nil {
+		return fmt.Errorf("missing %s secretref", configName)
+	}
+	params["secretName"] = credentials.SecretRef.SecretName
+	params["accessKeyKey"] = credentials.SecretRef.AccessKeyKey
+	params["secretKeyKey"] = credentials.SecretRef.SecretKeyKey
+	return nil
+}
+
+func validateUnsignedS3Params(params map[string]string) error {
+	if params["unsigned"] != strconv.FormatBool(true) {
+		return nil
+	}
+	if params["spiffeServerID"] == "" {
+		return fmt.Errorf("unsigned requires tls.spiffe.serverID")
+	}
+	if params["disableSSL"] == strconv.FormatBool(true) {
+		return fmt.Errorf("unsigned requires disableSSL to be false")
+	}
+	endpoint, err := objectstore.NormalizeUnsignedS3Endpoint(params["endpoint"])
+	if err != nil {
+		return err
+	}
+	params["endpoint"] = endpoint
+	return nil
+}
+
 func setSPIFFEServerID(params map[string]string, tls *S3TLSConfig) {
-	if tls != nil && tls.SPIFFE != nil && tls.SPIFFE.ServerID != "" {
-		params["spiffeServerID"] = tls.SPIFFE.ServerID
+	if tls != nil && tls.SPIFFE != nil {
+		serverID := strings.TrimSpace(tls.SPIFFE.ServerID)
+		if serverID != "" {
+			params["spiffeServerID"] = serverID
+		}
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/golang/glog"
 	api "github.com/kubeflow/pipelines/backend/api/v1beta1/go_client"
 	"github.com/kubeflow/pipelines/backend/src/v2/client_manager"
+	launcherconfig "github.com/kubeflow/pipelines/backend/src/v2/config"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kubeflow/pipelines/api/v2alpha1/go/pipelinespec"
@@ -751,9 +752,9 @@ func downloadArtifacts(ctx context.Context, executorInput *pipelinespec.Executor
 				if err != nil {
 					return fmt.Errorf("failed to parse bucketConfig for output artifact %q with uri %q: %w", name, inputArtifact.GetUri(), err)
 				}
-				nonDefaultBucket, ok := nonDefaultBuckets[nonDefaultBucketConfig.PrefixedBucket()]
+				nonDefaultBucket, ok := nonDefaultBuckets[inputArtifact.Uri]
 				if !ok {
-					return fmt.Errorf("failed to get bucket when downloading input artifact %s with bucket key %s: %w", name, nonDefaultBucketConfig.PrefixedBucket(), err)
+					return fmt.Errorf("failed to get bucket when downloading input artifact %s with uri %s", name, inputArtifact.Uri)
 				}
 				bucket = nonDefaultBucket
 				bucketConfig = nonDefaultBucketConfig
@@ -779,41 +780,81 @@ func fetchNonDefaultBuckets(
 	k8sClient kubernetes.Interface,
 ) (buckets map[string]*blob.Bucket, err error) {
 	nonDefaultBuckets := make(map[string]*blob.Bucket)
+	var providerConfig *launcherconfig.Config
+	providerConfigLoaded := false
 	for name, artifactList := range artifacts {
 		if len(artifactList.Artifacts) == 0 {
 			continue
 		}
-		// TODO: Support multiple artifacts someday, probably through the v2 engine.
-		artifact := artifactList.Artifacts[0]
+		for _, artifact := range artifactList.Artifacts {
+			// OCI artifacts are accessed via shared storage of a Modelcar.
+			if strings.HasPrefix(artifact.Uri, "oci://") {
+				continue
+			}
 
-		// OCI artifacts are accessed via shared storage of a Modelcar
-		if strings.HasPrefix(artifact.Uri, "oci://") {
-			continue
-		}
-
-		// The artifact does not belong under the object store path for this run. Cases:
-		// 1. Artifact is cached from a different run, so it may still be in the default bucket, but under a different run id subpath
-		// 2. Artifact is imported from the same bucket, but from a different path (re-use the same session)
-		// 3. Artifact is imported from a different bucket, or obj store (default to using user env in this case)
-		if !strings.HasPrefix(artifact.Uri, defaultBucketConfig.PrefixedBucket()) {
-			nonDefaultBucketConfig, parseErr := objectstore.ParseBucketConfigForArtifactURI(artifact.Uri)
-			if parseErr != nil {
-				return nonDefaultBuckets, fmt.Errorf("failed to parse bucketConfig for output artifact %q with uri %q: %w", name, artifact.GetUri(), parseErr)
+			// The artifact does not belong under the object store path for this run. Cases:
+			// 1. Artifact is cached from a different run, so it may still be in the default bucket, but under a different run id subpath
+			// 2. Artifact is imported from the same bucket, but from a different path (re-use the same session)
+			// 3. Artifact is imported from a different bucket or object store. Resolve its own provider
+			// config so unsigned endpoint and identity overrides are preserved.
+			if !strings.HasPrefix(artifact.Uri, defaultBucketConfig.PrefixedBucket()) {
+				nonDefaultBucketConfig, parseErr := objectstore.ParseBucketConfigForArtifactURI(artifact.Uri)
+				if parseErr != nil {
+					return nonDefaultBuckets, fmt.Errorf("failed to parse bucketConfig for output artifact %q with uri %q: %w", name, artifact.GetUri(), parseErr)
+				}
+				sameBucket := nonDefaultBucketConfig.Scheme == defaultBucketConfig.Scheme &&
+					nonDefaultBucketConfig.BucketName == defaultBucketConfig.BucketName
+				if !providerConfigLoaded {
+					providerConfigLoaded = true
+					providerConfig, parseErr = launcherconfig.FromConfigMap(ctx, k8sClient, namespace)
+					if parseErr != nil {
+						if !sameBucket && objectstore.IsUnsignedS3Session(defaultBucketConfig.SessionInfo) {
+							return nonDefaultBuckets, fmt.Errorf("failed to load launcher config for unsigned non-default buckets: %w", parseErr)
+						}
+						glog.Warningf("failed to load launcher config while resolving non-default buckets: %v", parseErr)
+					}
+				}
+				if resolveErr := setNonDefaultBucketSession(artifact.Uri, nonDefaultBucketConfig, defaultBucketConfig, providerConfig); resolveErr != nil {
+					return nonDefaultBuckets, fmt.Errorf("failed to resolve bucket session for output artifact %q with uri %q: %w", name, artifact.GetUri(), resolveErr)
+				}
+				nonDefaultBucket, bucketErr := objectstore.OpenBucket(ctx, k8sClient, namespace, nonDefaultBucketConfig)
+				if bucketErr != nil {
+					return nonDefaultBuckets, fmt.Errorf("failed to open bucket for output artifact %q with uri %q: %w", name, artifact.GetUri(), bucketErr)
+				}
+				nonDefaultBuckets[artifact.Uri] = nonDefaultBucket
 			}
-			// check if it's same bucket but under a different path, re-use the default bucket session in this case.
-			if (nonDefaultBucketConfig.Scheme == defaultBucketConfig.Scheme) && (nonDefaultBucketConfig.BucketName == defaultBucketConfig.BucketName) {
-				nonDefaultBucketConfig.SessionInfo = defaultBucketConfig.SessionInfo
-			}
-			nonDefaultBucket, bucketErr := objectstore.OpenBucket(ctx, k8sClient, namespace, nonDefaultBucketConfig)
-			if bucketErr != nil {
-				return nonDefaultBuckets, fmt.Errorf("failed to open bucket for output artifact %q with uri %q: %w", name, artifact.GetUri(), bucketErr)
-			}
-			nonDefaultBuckets[nonDefaultBucketConfig.PrefixedBucket()] = nonDefaultBucket
 		}
 
 	}
 	return nonDefaultBuckets, nil
 
+}
+
+func setNonDefaultBucketSession(uri string, nonDefaultBucketConfig, defaultBucketConfig *objectstore.Config, providerConfig *launcherconfig.Config) error {
+	sameBucket := nonDefaultBucketConfig.Scheme == defaultBucketConfig.Scheme &&
+		nonDefaultBucketConfig.BucketName == defaultBucketConfig.BucketName
+	if providerConfig != nil {
+		sessionInfo, err := providerConfig.GetStoreSessionInfo(uri)
+		if err != nil {
+			return err
+		}
+		if objectstore.IsUnsignedS3Session(&sessionInfo) {
+			nonDefaultBucketConfig.SessionInfo = &sessionInfo
+			return nil
+		}
+		if sameBucket && !objectstore.IsUnsignedS3Session(defaultBucketConfig.SessionInfo) {
+			nonDefaultBucketConfig.SessionInfo = defaultBucketConfig.SessionInfo
+		}
+		return nil
+	}
+	if sameBucket {
+		nonDefaultBucketConfig.SessionInfo = defaultBucketConfig.SessionInfo
+		return nil
+	}
+	if objectstore.IsUnsignedS3Session(defaultBucketConfig.SessionInfo) {
+		return fmt.Errorf("launcher config is required to resolve an unsigned non-default bucket")
+	}
+	return nil
 }
 
 func compileCmdAndArgs(executorInput *pipelinespec.ExecutorInput, cmd string, args []string) (string, []string, error) {

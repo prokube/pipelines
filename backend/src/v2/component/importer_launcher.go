@@ -55,7 +55,7 @@ type ImportLauncher struct {
 
 	// clients
 	metadataClient *metadata.Client
-	k8sClient      *kubernetes.Clientset
+	k8sClient      kubernetes.Interface
 }
 
 func NewImporterLauncher(ctx context.Context, componentSpecJSON, importerSpecJSON, taskSpecJSON string, launcherV2Opts *LauncherV2Options, importerLauncherOpts *ImporterLauncherOptions) (l *ImportLauncher, err error) {
@@ -279,12 +279,11 @@ func (l *ImportLauncher) ImportSpecToMLMDArtifact(ctx context.Context) (artifact
 		return nil, fmt.Errorf("no provider scheme found in artifact URI: %s", artifactUri)
 	}
 
-	// Assume all imported artifacts will rely on execution environment for store provider session info
+	// Imported artifacts historically rely on the execution environment. Workspace
+	// downloads resolve provider config separately and do not pass auth through MLMD.
 	storeSessionInfo := objectstore.SessionInfo{
 		Provider: provider,
-		Params: map[string]string{
-			"fromEnv": "true",
-		},
+		Params:   map[string]string{"fromEnv": "true"},
 	}
 	storeSessionInfoJSON, err := json.Marshal(storeSessionInfo)
 	if err != nil {
@@ -327,17 +326,27 @@ func (l *ImportLauncher) resolveBucketConfigForURI(ctx context.Context, uri stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse bucket config while resolving uri %q: %w", uri, err)
 	}
-	// Resolve and attach session info from kfp-launcher config for the artifact provider
+	sessionInfo, err := l.configuredSessionInfoForURI(ctx, uri)
+	if err != nil {
+		return nil, err
+	}
+	if sessionInfo != nil {
+		bucketConfig.SessionInfo = sessionInfo
+	}
+	return bucketConfig, nil
+}
+
+func (l *ImportLauncher) configuredSessionInfoForURI(ctx context.Context, uri string) (*objectstore.SessionInfo, error) {
 	if cfg, err := config.FromConfigMap(ctx, l.k8sClient, l.launcherV2Options.Namespace); err != nil {
 		glog.Warningf("failed to load launcher config while resolving bucket config: %v", err)
 	} else if cfg != nil {
 		if sess, err := cfg.GetStoreSessionInfo(uri); err != nil {
-			glog.Warningf("failed to resolve store session info for %q: %v", uri, err)
+			return nil, fmt.Errorf("failed to resolve store session info for %q: %w", uri, err)
 		} else {
-			bucketConfig.SessionInfo = &sess
+			return &sess, nil
 		}
 	}
-	return bucketConfig, nil
+	return nil, nil
 }
 
 func (l *ImportLauncher) getOutPutArtifactName() (string, error) {

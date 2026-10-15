@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -197,6 +198,85 @@ func Test_bucketConfig_KeyFromURI(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("bucketConfig.keyFromURI() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestStructuredS3ParamsUnsigned(t *testing.T) {
+	params, err := StructuredS3Params(map[string]string{
+		"unsigned": "true", "spiffeServerID": " \tspiffe://example.org/s3\n",
+	})
+	require.NoError(t, err)
+	assert.True(t, params.Unsigned)
+	assert.Equal(t, "spiffe://example.org/s3", params.SPIFFEServerID)
+}
+
+func TestCreateS3BucketSessionRejectsUnsafeUnsignedParams(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  map[string]string
+		wantErr string
+	}{
+		{
+			name:    "missing SPIFFE server ID",
+			params:  map[string]string{"unsigned": "true"},
+			wantErr: "unsigned requires a SPIFFE server ID",
+		},
+		{
+			name: "whitespace-only SPIFFE server ID",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": " \t\n ",
+			},
+			wantErr: "unsigned requires a SPIFFE server ID",
+		},
+		{
+			name: "SSL disabled",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": "spiffe://example.org/s3", "disableSSL": "true",
+			},
+			wantErr: "unsigned requires SSL",
+		},
+		{
+			name: "explicit HTTP endpoint",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": "spiffe://example.org/s3",
+				"endpoint": " \tHtTp://seaweedfs.example.org:9000 ",
+			},
+			wantErr: "unsigned endpoint scheme must be HTTPS",
+		},
+		{
+			name: "empty endpoint",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": "spiffe://example.org/s3",
+			},
+			wantErr: "unsigned requires a non-empty endpoint",
+		},
+		{
+			name: "explicit non-HTTPS endpoint scheme",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": "spiffe://example.org/s3",
+				"endpoint": "s3://seaweedfs.example.org:9000",
+			},
+			wantErr: "unsigned endpoint scheme must be HTTPS",
+		},
+		{
+			name: "environment credentials also enabled",
+			params: map[string]string{
+				"unsigned": "true", "spiffeServerID": "spiffe://example.org/s3", "fromEnv": "true",
+			},
+			wantErr: "unsigned and credentials are mutually exclusive",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, err := createS3BucketSession(context.Background(), "namespace", &SessionInfo{
+				Provider: "s3",
+				Params:   test.params,
+			}, fake.NewSimpleClientset())
+			require.Error(t, err)
+			assert.Nil(t, client)
+			assert.Contains(t, err.Error(), test.wantErr)
 		})
 	}
 }

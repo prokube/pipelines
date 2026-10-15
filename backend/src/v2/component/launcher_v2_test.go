@@ -25,16 +25,22 @@ import (
 
 	"github.com/kubeflow/pipelines/backend/src/v2/cacheutils"
 	"github.com/kubeflow/pipelines/backend/src/v2/client_manager"
+	launcherconfig "github.com/kubeflow/pipelines/backend/src/v2/config"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/kubeflow/pipelines/api/v2alpha1/go/pipelinespec"
 	"github.com/kubeflow/pipelines/backend/src/v2/metadata"
 	"github.com/kubeflow/pipelines/backend/src/v2/objectstore"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/memblob"
 	"google.golang.org/protobuf/types/known/structpb"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var addNumbersComponent = &pipelinespec.ComponentSpec{
@@ -198,6 +204,132 @@ func Test_getPlaceholders_WorkspaceArtifactPath(t *testing.T) {
 	if actual != expected {
 		t.Fatalf("placeholder path mismatch: actual=%q expected=%q", actual, expected)
 	}
+}
+
+func TestSetNonDefaultBucketSession(t *testing.T) {
+	providerClient := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "kfp-launcher", Namespace: "testnamespace"},
+		Data: map[string]string{"providers": `s3:
+  default:
+    endpoint: https://s3.example.org
+    unsigned: true
+    tls:
+      spiffe:
+        serverID: spiffe://example.org/s3
+  overrides:
+    - bucketName: other
+      keyPrefix: imported
+      endpoint: HTTPS://s3-override.example.org
+      region: override-region
+      unsigned: true
+      tls:
+        spiffe:
+          serverID: spiffe://example.org/s3-override
+minio:
+  default:
+    endpoint: https://minio.example.org
+    region: minio-region
+    unsigned: true
+    tls:
+      spiffe:
+        serverID: spiffe://example.org/minio
+`},
+	})
+	providerConfig, err := launcherconfig.FromConfigMap(context.Background(), providerClient, "testnamespace")
+	require.NoError(t, err)
+
+	rootSession := &objectstore.SessionInfo{Provider: "s3", Params: map[string]string{"unsigned": "true"}}
+	defaultConfig, err := objectstore.ParseBucketConfig("s3://default/pipeline-root", rootSession)
+	require.NoError(t, err)
+	s3Config, err := objectstore.ParseBucketConfigForArtifactURI("s3://other/imported/artifact")
+	require.NoError(t, err)
+
+	require.NoError(t, setNonDefaultBucketSession("s3://other/imported/artifact", s3Config, defaultConfig, providerConfig))
+	require.NotNil(t, s3Config.SessionInfo)
+	assert.Equal(t, "https://s3-override.example.org", s3Config.SessionInfo.Params["endpoint"])
+	assert.Equal(t, "override-region", s3Config.SessionInfo.Params["region"])
+	assert.Equal(t, "spiffe://example.org/s3-override", s3Config.SessionInfo.Params["spiffeServerID"])
+
+	minioConfig, err := objectstore.ParseBucketConfigForArtifactURI("minio://other/imported/artifact")
+	require.NoError(t, err)
+	require.NoError(t, setNonDefaultBucketSession("minio://other/imported/artifact", minioConfig, defaultConfig, providerConfig))
+	require.NotNil(t, minioConfig.SessionInfo)
+	assert.Equal(t, "minio", minioConfig.SessionInfo.Provider)
+	assert.Equal(t, "https://minio.example.org", minioConfig.SessionInfo.Params["endpoint"])
+	assert.Equal(t, "minio-region", minioConfig.SessionInfo.Params["region"])
+	assert.Equal(t, "spiffe://example.org/minio", minioConfig.SessionInfo.Params["spiffeServerID"])
+
+	signedSession := &objectstore.SessionInfo{Provider: "s3", Params: map[string]string{"fromEnv": "true"}}
+	defaultConfig.SessionInfo = signedSession
+	s3Config.SessionInfo = nil
+	require.NoError(t, setNonDefaultBucketSession("s3://other/imported/artifact", s3Config, defaultConfig, nil))
+	assert.Nil(t, s3Config.SessionInfo, "signed cross-bucket behavior must continue using environment credentials")
+
+	sameBucketConfig, err := objectstore.ParseBucketConfigForArtifactURI("s3://default/other/artifact")
+	require.NoError(t, err)
+	require.NoError(t, setNonDefaultBucketSession("s3://default/other/artifact", sameBucketConfig, defaultConfig, nil))
+	assert.Same(t, signedSession, sameBucketConfig.SessionInfo, "same-bucket signed session reuse must remain unchanged")
+
+	defaultConfig.SessionInfo = rootSession
+	err = setNonDefaultBucketSession("s3://other/imported/artifact", s3Config, defaultConfig, nil)
+	require.ErrorContains(t, err, "launcher config is required")
+}
+
+func TestImporterWorkspaceUsesUnsignedSPIFFEConfig(t *testing.T) {
+	launcher := &ImportLauncher{
+		launcherV2Options: LauncherV2Options{Namespace: "testnamespace"},
+		k8sClient: fake.NewSimpleClientset(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "kfp-launcher", Namespace: "testnamespace"},
+			Data: map[string]string{"providers": `s3:
+  default:
+    endpoint: https://seaweedfs.example.org:9000
+    unsigned: true
+    tls:
+      spiffe:
+        serverID: spiffe://example.org/seaweedfs
+`},
+		}),
+	}
+
+	bucketConfig, err := launcher.resolveBucketConfigForURI(context.Background(), "s3://other-bucket/path/artifact")
+	require.NoError(t, err)
+	require.NotNil(t, bucketConfig.SessionInfo)
+	assert.Equal(t, "true", bucketConfig.SessionInfo.Params["unsigned"])
+}
+
+func TestImporterRejectsInvalidConfiguredUnsignedSession(t *testing.T) {
+	launcher := &ImportLauncher{
+		launcherV2Options: LauncherV2Options{Namespace: "testnamespace"},
+		k8sClient: fake.NewSimpleClientset(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "kfp-launcher", Namespace: "testnamespace"},
+			Data: map[string]string{"providers": `s3:
+  default:
+    endpoint: HTTP://seaweedfs.example.org:9000
+    unsigned: true
+    tls:
+      spiffe:
+        serverID: spiffe://example.org/seaweedfs
+`},
+		}),
+	}
+
+	_, err := launcher.resolveBucketConfigForURI(context.Background(), "s3://imported-bucket/path/artifact")
+	require.ErrorContains(t, err, "unsigned endpoint scheme must be HTTPS")
+}
+
+func TestImporterWorkspaceFallsBackWhenConfigMapLoadFails(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("configmap API unavailable")
+	})
+	launcher := &ImportLauncher{
+		launcherV2Options: LauncherV2Options{Namespace: "testnamespace"},
+		k8sClient:         client,
+	}
+
+	bucketConfig, err := launcher.resolveBucketConfigForURI(context.Background(), "s3://imported-bucket/path/artifact")
+	require.NoError(t, err)
+	assert.Nil(t, bucketConfig.SessionInfo)
 }
 
 func Test_executorInput_compileCmdAndArgs(t *testing.T) {

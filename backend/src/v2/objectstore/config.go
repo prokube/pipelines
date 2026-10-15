@@ -18,6 +18,7 @@ package objectstore
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"strconv"
@@ -49,6 +50,7 @@ type GCSParams struct {
 
 type S3Params struct {
 	FromEnv    bool
+	Unsigned   bool
 	SecretName string
 	// The k8s secret "Key" for "Artifact SecretKey" and "Artifact AccessKey"
 	AccessKeyKey   string
@@ -59,6 +61,43 @@ type S3Params struct {
 	ForcePathStyle bool
 	MaxRetries     int
 	SPIFFEServerID string
+}
+
+// IsUnsignedS3Session reports whether sessionInfo requires unsigned S3-compatible access.
+func IsUnsignedS3Session(sessionInfo *SessionInfo) bool {
+	if sessionInfo == nil || (sessionInfo.Provider != "s3" && sessionInfo.Provider != "minio") {
+		return false
+	}
+	unsigned, err := strconv.ParseBool(sessionInfo.Params["unsigned"])
+	return err == nil && unsigned
+}
+
+var endpointSchemePattern = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*)://`)
+
+// NormalizeUnsignedS3Endpoint validates and canonicalizes an endpoint used without SigV4.
+func NormalizeUnsignedS3Endpoint(endpoint string) (string, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", fmt.Errorf("unsigned requires a non-empty endpoint")
+	}
+
+	match := endpointSchemePattern.FindStringSubmatch(endpoint)
+	if match == nil {
+		if strings.Contains(endpoint, "://") {
+			return "", fmt.Errorf("unsigned endpoint has an invalid scheme")
+		}
+		return endpoint, nil
+	}
+	if !strings.EqualFold(match[1], "https") {
+		return "", fmt.Errorf("unsigned endpoint scheme must be HTTPS")
+	}
+
+	endpoint = "https://" + endpoint[len(match[0]):]
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
+		return "", fmt.Errorf("unsigned endpoint must be a valid HTTPS URL")
+	}
+	return endpoint, nil
 }
 
 func (b *Config) bucketURL() string {
@@ -176,6 +215,13 @@ func GetSessionInfoFromString(sessionInfoJSON string) (*SessionInfo, error) {
 
 func StructuredS3Params(p map[string]string) (*S3Params, error) {
 	sparams := &S3Params{}
+	if val, ok := p["unsigned"]; ok {
+		boolVal, err := strconv.ParseBool(val)
+		if err != nil {
+			return nil, err
+		}
+		sparams.Unsigned = boolVal
+	}
 	if val, ok := p["fromEnv"]; ok {
 		boolVal, err := strconv.ParseBool(val)
 		if err != nil {
@@ -223,7 +269,7 @@ func StructuredS3Params(p map[string]string) (*S3Params, error) {
 		sparams.MaxRetries = int(intVal)
 	}
 	if val, ok := p["spiffeServerID"]; ok {
-		sparams.SPIFFEServerID = val
+		sparams.SPIFFEServerID = strings.TrimSpace(val)
 	}
 	return sparams, nil
 }

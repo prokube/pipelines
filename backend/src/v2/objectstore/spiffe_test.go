@@ -18,8 +18,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spiffe/go-spiffe/v2/bundle/x509bundle"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
@@ -148,4 +152,72 @@ func TestCreateS3BucketSessionUsesProviderSPIFFEConfig(t *testing.T) {
 	transport, ok := httpClient.Transport.(*http.Transport)
 	require.True(t, ok)
 	assert.NotNil(t, transport.TLSClientConfig)
+}
+
+func TestCreateUnsignedS3BucketSessionDoesNotReadSecretOrResolveCredentials(t *testing.T) {
+	t.Setenv(workloadapi.SocketEnv, "unix:///spiffe-workload-api/spire-agent.sock")
+	t.Setenv("AWS_ACCESS_KEY_ID", "environment-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "environment-secret-key")
+	originalNewX509Source := newX509Source
+	newX509Source = func(context.Context) (x509Source, error) {
+		return &fakeX509Source{}, nil
+	}
+	t.Cleanup(func() { newX509Source = originalNewX509Source })
+	ctx, closeSource := WithSPIFFEWorkloadAPI(context.Background())
+	t.Cleanup(func() { require.NoError(t, closeSource()) })
+
+	clientSet := fake.NewSimpleClientset()
+	sessionInfo := &SessionInfo{
+		Provider: "s3",
+		Params: map[string]string{
+			"unsigned":       "true",
+			"region":         "us-east-1",
+			"endpoint":       "seaweedfs.example.org:9000",
+			"disableSSL":     "false",
+			"forcePathStyle": "true",
+			"spiffeServerID": "spiffe://example.org/seaweedfs",
+		},
+	}
+
+	client, err := createS3BucketSession(ctx, "testnamespace", sessionInfo, clientSet)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.Empty(t, clientSet.Actions(), "unsigned mode must not read a Kubernetes Secret")
+	assert.Nil(t, client.Options().Credentials,
+		"the S3 client converts anonymous credentials to nil to disable credential resolution and SigV4 signing")
+}
+
+func TestUnsignedS3RequestHasNoSigV4Authentication(t *testing.T) {
+	requests := make(chan *http.Request, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Clone(r.Context())
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bucket</Name></ListBucketResult>`))
+	}))
+	t.Cleanup(server.Close)
+
+	sessionInfo := &SessionInfo{
+		Provider: "s3",
+		Params: map[string]string{
+			"unsigned":       "true",
+			"region":         "us-east-1",
+			"endpoint":       " \tHTTPS" + strings.TrimPrefix(server.URL, "https") + " ",
+			"disableSSL":     "false",
+			"forcePathStyle": "true",
+			"spiffeServerID": "spiffe://example.org/seaweedfs",
+		},
+	}
+	clientSet := fake.NewSimpleClientset()
+	client, err := createS3BucketSessionWithHTTPClient(
+		context.Background(), "testnamespace", sessionInfo, clientSet, server.Client())
+	require.NoError(t, err)
+
+	_, err = client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{Bucket: aws.String("bucket")})
+	require.NoError(t, err)
+	request := <-requests
+	assert.Empty(t, request.Header.Get("Authorization"))
+	for key := range request.URL.Query() {
+		assert.False(t, strings.HasPrefix(strings.ToLower(key), "x-amz-"), "unexpected SigV4 query parameter %q", key)
+	}
+	assert.Empty(t, clientSet.Actions(), "unsigned requests must not read a Kubernetes Secret")
 }
