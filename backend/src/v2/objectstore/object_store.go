@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,8 +28,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/golang/glog"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
+	"github.com/spiffe/go-spiffe/v2/workloadapi"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/gcsblob"
 	_ "gocloud.dev/blob/gcsblob"
@@ -254,7 +259,12 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 	if params.FromEnv {
 		return nil, nil
 	}
-	creds, err := getS3BucketCredential(ctx, client, namespace, params.SecretName, params.SecretKeyKey, params.AccessKeyKey)
+	var creds aws.CredentialsProvider
+	if params.Spiffe != nil {
+		creds, err = newSpiffeWebIdentityCredentials(params, fetchSpiffeJWTSVID)
+	} else {
+		creds, err = getS3BucketCredential(ctx, client, namespace, params.SecretName, params.SecretKeyKey, params.AccessKeyKey)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +275,7 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 			// and doubling the wait time between retries up to a maximum, helping to avoid thundering herd problems.
 			return retry.AddWithMaxAttempts(retry.NewStandard(), params.MaxRetries)
 		}),
-		config.WithCredentialsProvider(*creds),
+		config.WithCredentialsProvider(creds),
 		config.WithRegion(*aws.String(params.Region)),
 	)
 	if err != nil {
@@ -300,6 +310,80 @@ func createS3BucketSession(ctx context.Context, namespace string, sessionInfo *S
 		return nil, fmt.Errorf("Failed to create object store session, %v", err)
 	}
 	return s3Client, nil
+}
+
+type spiffeJWTFetcher func(context.Context, string, string) ([]byte, error)
+
+type spiffeWebIdentityProvider struct {
+	client          stscreds.AssumeRoleWithWebIdentityAPIClient
+	fetchToken      spiffeJWTFetcher
+	socket          string
+	audience        string
+	roleARN         string
+	roleSessionName string
+}
+
+func (p *spiffeWebIdentityProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	token, err := p.fetchToken(ctx, p.socket, p.audience)
+	if err != nil {
+		return aws.Credentials{}, fmt.Errorf("failed to fetch SPIFFE JWT-SVID: %w", err)
+	}
+	provider := stscreds.NewWebIdentityRoleProvider(p.client, p.roleARN, identityToken(token), func(options *stscreds.WebIdentityRoleOptions) {
+		options.RoleSessionName = p.roleSessionName
+	})
+	return provider.Retrieve(ctx)
+}
+
+type identityToken []byte
+
+func (t identityToken) GetIdentityToken() ([]byte, error) {
+	return t, nil
+}
+
+func fetchSpiffeJWTSVID(ctx context.Context, socket, audience string) ([]byte, error) {
+	svid, err := workloadapi.FetchJWTSVID(ctx, jwtsvid.Params{Audience: audience}, workloadapi.WithAddr(socket))
+	if err != nil {
+		return nil, err
+	}
+	return []byte(svid.Marshal()), nil
+}
+
+func newSpiffeWebIdentityCredentials(params *S3Params, fetchToken spiffeJWTFetcher) (aws.CredentialsProvider, error) {
+	if params.Spiffe.Audience == "" {
+		return nil, fmt.Errorf("missing SPIFFE audience")
+	}
+	if params.Spiffe.RoleARN == "" {
+		return nil, fmt.Errorf("missing SPIFFE role ARN")
+	}
+	socket, ok := os.LookupEnv(workloadapi.SocketEnv)
+	if !ok || socket == "" {
+		return nil, fmt.Errorf("%s must be set for SPIFFE authentication", workloadapi.SocketEnv)
+	}
+	if err := workloadapi.ValidateAddress(socket); err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", workloadapi.SocketEnv, err)
+	}
+
+	stsConfig := aws.Config{
+		Region:      params.Region,
+		Credentials: aws.AnonymousCredentials{},
+	}
+	if params.Spiffe.STSEndpoint != "" {
+		endpoint, err := url.Parse(params.Spiffe.STSEndpoint)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
+			endpoint.User != nil || endpoint.Path != "" || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return nil, fmt.Errorf("invalid SPIFFE STS endpoint %q", params.Spiffe.STSEndpoint)
+		}
+		stsConfig.BaseEndpoint = aws.String(params.Spiffe.STSEndpoint)
+	}
+
+	return aws.NewCredentialsCache(&spiffeWebIdentityProvider{
+		client:          sts.NewFromConfig(stsConfig),
+		fetchToken:      fetchToken,
+		socket:          socket,
+		audience:        params.Spiffe.Audience,
+		roleARN:         params.Spiffe.RoleARN,
+		roleSessionName: params.Spiffe.RoleSessionName,
+	}), nil
 }
 
 func getS3BucketCredential(

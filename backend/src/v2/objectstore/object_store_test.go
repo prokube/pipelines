@@ -17,10 +17,14 @@ package objectstore
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -325,4 +329,76 @@ func Test_createS3BucketSession(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSpiffeWebIdentityCredentialsExchangeAndRefresh(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.NoError(t, r.ParseForm())
+		assert.Empty(t, r.Header.Get("Authorization"))
+		assert.Equal(t, "AssumeRoleWithWebIdentity", r.Form.Get("Action"))
+		assert.Equal(t, "arn:example:role", r.Form.Get("RoleArn"))
+		assert.Equal(t, "pipeline-task", r.Form.Get("RoleSessionName"))
+		assert.Equal(t, fmt.Sprintf("jwt-%d", requests), r.Form.Get("WebIdentityToken"))
+
+		expiration := time.Now().Add(time.Hour)
+		if requests == 1 {
+			expiration = time.Now().Add(-time.Minute)
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		_, err := fmt.Fprintf(w, `<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>access-%d</AccessKeyId><SecretAccessKey>secret-%d</SecretAccessKey><SessionToken>session-%d</SessionToken><Expiration>%s</Expiration></Credentials></AssumeRoleWithWebIdentityResult><ResponseMetadata><RequestId>request-id</RequestId></ResponseMetadata></AssumeRoleWithWebIdentityResponse>`, requests, requests, requests, expiration.UTC().Format(time.RFC3339))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "unix:///tmp/spire-agent.sock")
+	fetches := 0
+	credentials, err := newSpiffeWebIdentityCredentials(&S3Params{
+		Region: "us-east-1",
+		Spiffe: &S3SpiffeParams{
+			Audience:        "sts-audience",
+			RoleARN:         "arn:example:role",
+			RoleSessionName: "pipeline-task",
+			STSEndpoint:     server.URL,
+		},
+	}, func(_ context.Context, socket, audience string) ([]byte, error) {
+		fetches++
+		assert.Equal(t, "unix:///tmp/spire-agent.sock", socket)
+		assert.Equal(t, "sts-audience", audience)
+		return []byte(fmt.Sprintf("jwt-%d", fetches)), nil
+	})
+	require.NoError(t, err)
+
+	first, err := credentials.Retrieve(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "access-1", first.AccessKeyID)
+	assert.Equal(t, "session-1", first.SessionToken)
+
+	second, err := credentials.Retrieve(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "access-2", second.AccessKeyID)
+	assert.Equal(t, "session-2", second.SessionToken)
+	assert.Equal(t, 2, fetches)
+	assert.Equal(t, 2, requests)
+}
+
+func TestSpiffeWebIdentityCredentialsRequireWorkloadAPISocket(t *testing.T) {
+	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "")
+	_, err := newSpiffeWebIdentityCredentials(&S3Params{
+		Spiffe: &S3SpiffeParams{Audience: "audience", RoleARN: "arn:example:role"},
+	}, fetchSpiffeJWTSVID)
+	require.ErrorContains(t, err, "SPIFFE_ENDPOINT_SOCKET must be set")
+}
+
+func TestSpiffeWebIdentityCredentialsRejectInvalidSTSEndpoint(t *testing.T) {
+	t.Setenv("SPIFFE_ENDPOINT_SOCKET", "unix:///tmp/spire-agent.sock")
+	_, err := newSpiffeWebIdentityCredentials(&S3Params{
+		Spiffe: &S3SpiffeParams{
+			Audience:    "audience",
+			RoleARN:     "arn:example:role",
+			STSEndpoint: "http://sts.example.test/path",
+		},
+	}, fetchSpiffeJWTSVID)
+	require.ErrorContains(t, err, "invalid SPIFFE STS endpoint")
 }
